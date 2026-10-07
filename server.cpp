@@ -65,7 +65,7 @@ public:
         {
             Node* temp = top;
             T val = temp->data;
-            temp = temp->next;
+            top = top->next;
             delete temp;
             count--;
             return val;
@@ -91,6 +91,15 @@ public:
     }
     int32_t snapshot_into(T out[], int32_t maxLen)
     {
+        Node* temp = top;
+        int32_t i = 0;
+        while (temp != nullptr && i != maxLen)
+        {
+            out[i] = temp->data;
+            temp = temp->next;
+            i++;
+        }
+        return i;
         // copies every frame, top to bottom in the array given as a parameter
         // this is what buildSnapshot() call, returns count written
     }
@@ -114,16 +123,23 @@ public:
     // Implement these functions
     Timeline()
     {
+        head = nullptr;
+        tail = nullptr;
+        stepCount = 0;
     }
     void record(Snapshot* s)
     {
+        TimelineNode* temp = new TimelineNode(s);
+        if(head)
         // add record in the timeline
     }
     TimelineNode* begin()
     {
+        return head;
     }
     int32_t getStepCount()
     {
+        return stepCount;
     }
 };
 
@@ -179,19 +195,101 @@ struct PendingPatch
 // PASS 0x0: READING source.bin + VALIDITY CHECK
 bool readSourceLine(ifstream& in, string& out)
 {
+    string line;
+    while (getline(in, line))
+    {
+        for (int i - 0; i < line.size(); i++)
+        {
+            if (line[i] != ' ' && line[i] != '\t' && line[i] != 'r')
+            {
+                out = line;
+                return true;
+            }
+        }
+        return false;
+    }
     // reads the next nonblank line
 }
 string firstWord(const string& line)
 {
+    uint16_t i = 0;
+    while (i < line.size() && (line[i] == '\t' || line[i] == ' '))
+    {
+        i++;
+    }
+    uint16_t j = i;
+    while (j < line.size() && line[j] != '\r' && line[j] != ' ' && line[j] != '\t')
+    {
+        j++;
+    }
+    string first = "";
+    for (uint16_t n = i; n < i; n++)
+    {
+        first = first + line[n];
+    }
+    return first;
     // returns first word from the input string
 }
 string secondWord(const string& line)
 {
+    uint16_t i = 0;
+    while (i < line.size() && (line[i] == '\t' || line[i] == ' '))
+    {
+        i++;
+    }
+    while (i < line.size() && line[i] != '\t' && line[i] != ' ')
+    {
+        i++;
+    }
+    while (i < line.size() && (line[i] == '\t' || line[i] == ' '))
+    {
+        i++;
+    }
+    uint16_t j = i;
+    while (j < line.size() && line[j] != '\r' && line[j] != ' ' && line[j] != '\t')
+    {
+        j++;
+    }
+    string sec = "";
+    for (uint16_t n = i; n < i; n++)
+    {
+        sec = sec + line[n];
+    }
+    return sec;
     // returns the second word
 }
 bool validateProgram(const char* sourcePath)
 {
-    // for each func defined there should be exactly one func_end and no nested funcs allowed - 
+    ifstream file(sourcePath);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    bool nested = false;
+    string line;
+    while (readSourceLine(file, line))
+    {
+        string word = firstWord(line);
+        if (word == "func")
+        {
+            if (nested == true)
+            {
+                return false;
+            }
+            nested = true;
+        }
+        else if (word == "func_end")
+        {
+            if (nested == false)
+            {
+                return false;
+            }
+            nested = false;
+        }
+        return nested = false;
+    }
+    // for each func defined there should 
+    // be exactly one func_end and no nested funcs allowed - 
 }
 
 // PASS 0x1: RESOLVE() -> resolve.bin
