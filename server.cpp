@@ -12,6 +12,7 @@
 #include <string>
 #include <cstdint>
 #include <fstream>
+#include<sstream>
 #include <cstdint>
 #include <cstdio>
 using namespace std;
@@ -52,7 +53,8 @@ public:
     {
         if (count < MAX_STACK_DEPTH)
         {
-            Node* temp = new Node(val);
+            Node* temp = new Node;
+            temp->data=val;
             temp->next = top;
             top = temp;
             count++;
@@ -61,6 +63,10 @@ public:
     }
     T pop()
     {
+        if(count==0)
+        {
+            return T();
+        }
         if (top != nullptr)
         {
             Node* temp = top;
@@ -129,8 +135,20 @@ public:
     }
     void record(Snapshot* s)
     {
-        //TimelineNode* temp = new TimelineNode(s);
-        //if(head)
+        TimelineNode*temp=new TimelineNode;
+        temp->data=s;
+        temp->next=nullptr;
+        temp->prev=tail;
+        if(head==nullptr)
+        {
+            head=temp;
+            tail=temp;
+        }
+        else{
+            tail->next=temp;
+            tail=temp;
+        }
+        stepCount++;
         // add record in the timeline
     }
     TimelineNode* begin()
@@ -200,30 +218,30 @@ bool readSourceLine(ifstream& in, string& out)
     {
         for (int i = 0; i < line.size(); i++)
         {
-            if (line[i] != ' ' && line[i] != '\t' && line[i] != 'r')
+            if (line[i] != ' ' && line[i] != '\t' && line[i] != '\r')
             {
                 out = line;
                 return true;
             }
         }
-        return false;
     }
+    return false;
     // reads the next nonblank line
 }
 string firstWord(const string& line)
 {
-    uint16_t i = 0;
+    int32_t i = 0;
     while (i < line.size() && (line[i] == '\t' || line[i] == ' '))
     {
         i++;
     }
-    uint16_t j = i;
+    int32_t j = i;
     while (j < line.size() && line[j] != '\r' && line[j] != ' ' && line[j] != '\t')
     {
         j++;
     }
     string first = "";
-    for (uint16_t n = i; n < j; n++)
+    for (int n = i; n < j; n++)
     {
         first = first + line[n];
     }
@@ -232,7 +250,7 @@ string firstWord(const string& line)
 }
 string secondWord(const string& line)
 {
-    uint16_t i = 0;
+    int i = 0;
     while (i < line.size() && (line[i] == '\t' || line[i] == ' '))
     {
         i++;
@@ -245,13 +263,13 @@ string secondWord(const string& line)
     {
         i++;
     }
-    uint16_t j = i;
+    int j = i;
     while (j < line.size() && line[j] != '\r' && line[j] != ' ' && line[j] != '\t')
     {
         j++;
     }
     string sec = "";
-    for (uint16_t n = i; n < j; n++)
+    for (int n = i; n < j; n++)
     {
         sec = sec + line[n];
     }
@@ -287,7 +305,7 @@ bool validateProgram(const char* sourcePath)
             nested = false;
         }
     }
-    return nested = false;
+    return nested == false;
     // for each func defined there should 
     // be exactly one func_end and no nested funcs allowed - 
 }
@@ -309,7 +327,7 @@ int64_t readResolveRecord(FILE* f, string& outText)
 {
     int64_t offset;
     int32_t size;
-    if(fread(&offset,size,1,f)!=1)
+    if(fread(&offset,8,1,f)!=1)
     {
         return -1;
     }
@@ -401,6 +419,27 @@ struct Token
 };
 int32_t tokenizeLine(const string& line, Token tokens[], int32_t maxTokens)
 {
+    stringstream ss(line);
+    string token;
+    int32_t i=0;
+    while(i<maxTokens&&ss>>token)
+    {
+        if(i==0)
+        {
+            tokens[i].type==KEYWORD;
+        }
+        else if(i==1)
+        {
+            tokens[i].type==IDENTIFIER;
+        }
+        else
+        {
+            tokens[i].type=PARAM;
+        }
+        tokens[i].text=token;
+        i++;
+    }
+    return i;
     // first word is always a instruction keyword
     // instruction set = [func, func_end, call, set, add, sub, mul and div]
     // next word is identifier like name of a function, variable name
@@ -408,6 +447,9 @@ int32_t tokenizeLine(const string& line, Token tokens[], int32_t maxTokens)
 }
 Snapshot* buildSnapshot(Stack<Frame>& callStack)
 {
+    Snapshot* s=new Snapshot;
+    s->stackDepth=callStack.snapshot_into(s->callStack,MAX_STACK_DEPTH);
+    return s;
     // build the snapshot based on the callStack given
 }
 void executeProgram(const char* resolveBinPath, int64_t mainOffset, Timeline& timeline)
@@ -415,6 +457,7 @@ void executeProgram(const char* resolveBinPath, int64_t mainOffset, Timeline& ti
     // initialize the call stack
     // make the main frame
     // push main frame on the call stack
+    
 
     // implementation:
     // execute line by line, and according to the keyword perform action
@@ -432,7 +475,6 @@ void writeTdbg(Timeline& timeline, const char* tdbgPath)
 // main section
 int32_t main()
 {
-
     if (!validateProgram("source.bin"))
     {
         // send an error response instead of a .tdbg file
