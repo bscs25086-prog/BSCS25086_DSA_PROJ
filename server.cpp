@@ -129,8 +129,8 @@ public:
     }
     void record(Snapshot* s)
     {
-        TimelineNode* temp = new TimelineNode(s);
-        if(head)
+        //TimelineNode* temp = new TimelineNode(s);
+        //if(head)
         // add record in the timeline
     }
     TimelineNode* begin()
@@ -198,7 +198,7 @@ bool readSourceLine(ifstream& in, string& out)
     string line;
     while (getline(in, line))
     {
-        for (int i - 0; i < line.size(); i++)
+        for (int i = 0; i < line.size(); i++)
         {
             if (line[i] != ' ' && line[i] != '\t' && line[i] != 'r')
             {
@@ -223,7 +223,7 @@ string firstWord(const string& line)
         j++;
     }
     string first = "";
-    for (uint16_t n = i; n < i; n++)
+    for (uint16_t n = i; n < j; n++)
     {
         first = first + line[n];
     }
@@ -251,7 +251,7 @@ string secondWord(const string& line)
         j++;
     }
     string sec = "";
-    for (uint16_t n = i; n < i; n++)
+    for (uint16_t n = i; n < j; n++)
     {
         sec = sec + line[n];
     }
@@ -286,8 +286,8 @@ bool validateProgram(const char* sourcePath)
             }
             nested = false;
         }
-        return nested = false;
     }
+    return nested = false;
     // for each func defined there should 
     // be exactly one func_end and no nested funcs allowed - 
 }
@@ -295,11 +295,28 @@ bool validateProgram(const char* sourcePath)
 // PASS 0x1: RESOLVE() -> resolve.bin
 int64_t writeResolveRecord(FILE* f, int64_t offsetField, const string& text)
 {
+    int32_t string_size=text.size();
+    int32_t st=ftell(f);
+    int64_t* temp=&offsetField;
+    fwrite(temp,8,1,f);
+    fwrite(&string_size,4,1,f);
+    fwrite(text.data(),1,string_size,f);
+    return st;
     // writes one [offset(8B)][size(4B)][string] record at the current file position
     // returns this record's own starting byte position
 }
 int64_t readResolveRecord(FILE* f, string& outText)
 {
+    int64_t offset;
+    int32_t size;
+    if(fread(&offset,size,1,f)!=1)
+    {
+        return -1;
+    }
+    fread(&size,4,1,f);
+    outText.resize(size);
+    fread(&outText[0],1,size,f);
+    return offset;
     // reads one record at the current position and advances past it, returns the offset field - the raw line text comes back untouched in outText.
 }
 int64_t resolveProgram(const char* sourcePath, const char* resolveBinPath)
