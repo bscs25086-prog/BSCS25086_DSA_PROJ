@@ -9,3 +9,8 @@ kia kia karna hai and then im gonna try to implement it after.
 -stage 2 bhi samajh lia tha
 -also switched to linux
 11/10/2026:
+-started stage 2
+-done with write resolve and read resolve
+-gonna do resolveprogram now
+-why did resolve program take so long ?? im done with it now
+-gonna start stage 3 soon

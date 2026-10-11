@@ -325,6 +325,59 @@ int64_t resolveProgram(const char* sourcePath, const char* resolveBinPath)
     int32_t funcCount = 0;
     PendingPatch patches[MAX_PATCHES];
     int32_t patchCount = 0;
+    ifstream fin(sourcePath);
+    FILE*fout=fopen(resolveBinPath,"wb");
+    string input;
+    while(readSourceLine(fin,input))
+    {
+        string word=firstWord(input);
+        int64_t pos=writeResolveRecord(fout,0,input);
+        if(word=="func")
+        {
+            funcArray[funcCount].funcName=secondWord(input);
+            funcArray[funcCount].byteOffsetInResolveBin=pos;
+            funcCount++;
+        }
+        else if(word=="call")
+        {
+            patches[patchCount].byteOffsetOfOffsetField=pos;
+            patches[patchCount].targetFuncName=secondWord(input);
+            patchCount++;
+        }
+    }
+        fclose(fout);
+        fin.close();
+        FILE*f=fopen(resolveBinPath,"r+b");
+        for(int i=0;i<patchCount;i++)
+        {
+            int64_t temp=-1;
+            for(int j=0;j<funcCount;j++)
+            {
+                if(funcArray[j].funcName==patches[i].targetFuncName)
+                {
+                    temp=funcArray[j].byteOffsetInResolveBin;
+                    break;
+                }
+            }
+            if(temp==-1)
+            {
+                fclose(f);
+                return -1;
+            }
+            fseek(f,patches[i].byteOffsetOfOffsetField,SEEK_SET);
+            fwrite(&temp,8,1,f);
+        }
+            int64_t main_pos=-1;
+            for(int i=0;i<funcCount;i++)
+            {
+                if(funcArray[i].funcName=="main")
+                {
+                    main_pos=funcArray[i].byteOffsetInResolveBin;
+                }
+            }
+            fclose(f);
+            return main_pos;
+    }
     // Every source line becomes one record holding the raw line, as-is.
     // resolve() only PEEKS at the leading word(s) -- enough to spot FUNC
     // (remember its position) and CALL (remember which function it needs
@@ -333,7 +386,6 @@ int64_t resolveProgram(const char* sourcePath, const char* resolveBinPath)
     // with its target's position. Patching happens after the full write
     // Returns the byte offset of main's FUNC header record.
     // if there is no main return the error 
-}
 
 // PASS 0x2: EXECUTION (tokenization happens here)
 enum TokenType
