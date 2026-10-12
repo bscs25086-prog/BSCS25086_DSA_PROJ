@@ -77,6 +77,7 @@ public:
             return val;
         }
         // pop the top value on the stack
+        return T();
     }
     T& peek()
     {
@@ -426,11 +427,11 @@ int32_t tokenizeLine(const string& line, Token tokens[], int32_t maxTokens)
     {
         if(i==0)
         {
-            tokens[i].type==KEYWORD;
+            tokens[i].type=KEYWORD;
         }
         else if(i==1)
         {
-            tokens[i].type==IDENTIFIER;
+            tokens[i].type=IDENTIFIER;
         }
         else
         {
@@ -452,13 +453,202 @@ Snapshot* buildSnapshot(Stack<Frame>& callStack)
     return s;
     // build the snapshot based on the callStack given
 }
+int get_val(const string& s, Frame&f)
+{
+    if((s[0]>='0'&&s[0]<='9')||(s[0]=='-'&&s.size()>1))
+    {
+        int val=0;
+        int i=0;
+        if(s[0]=='-')
+        {
+            i=1;
+        }
+        for(int j=i;j<s.size();j++)
+        {
+            val=val*10+(s[j]-'0');
+        }
+        if(s[0]=='-')
+        {
+            val=-1*val;
+        }
+        return val;
+    }
+    for(int i=0;i<f.localCount;i++)
+    {
+        if(f.locals[i].name==s)
+        {
+            return f.locals[i].value;
+        }
+    }
+    for(int i=0;i<f.argc;i++)
+    {
+        if(f.argv[i].name==s)
+        {
+            return f.argv[i].value;
+        }
+    }
+    return 0;
+}
+int find_var(const string& s,Frame& f, bool& flag)
+{
+    flag=false;
+    for(int i=0;i<f.localCount;i++)
+    {
+        if(f.locals[i].name==s)
+        {
+            return i;
+        }
+    }
+    flag=true;
+    for(int i=0;i<f.argc;i++)
+    {
+        if(f.argv[i].name==s)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
 void executeProgram(const char* resolveBinPath, int64_t mainOffset, Timeline& timeline)
 {
     // initialize the call stack
     // make the main frame
     // push main frame on the call stack
-    
+    FILE* f=fopen(resolveBinPath,"rb");
+    Stack<Frame>callStack;
+    fseek(f,mainOffset,SEEK_SET);
+    Frame main_frame;
+    string names[MAX_STACK_DEPTH][MAX_VARS_PER_FRAME];
+    main_frame.func_name="main";
+    main_frame.argc=0;
+    main_frame.returnLine=-1;
+    main_frame.localCount=0;
+    callStack.push(main_frame);
+    string line;
+    readResolveRecord(f,line);
+    int64_t val=0;
+    while((val=readResolveRecord(f,line))!=-1)
+    {
+        Token tokens[MAX_TOKENS];
+        int t=tokenizeLine(line,tokens,MAX_TOKENS);
+        string first=tokens[0].text;
+        Frame& fr=callStack.peek();
+        if(t>=3&&(first=="set"||first=="sub"||first=="add"||first=="div"||first=="mul"))
+        {
+            int temp=get_val(tokens[2].text,fr);
+            bool flag;
+            int position=find_var(tokens[1].text,fr,flag);
+            int idek=0;
+            if(position!=-1)
+            {
+                if(flag==true)
+                {
+                    idek=fr.argv[position].value;
+                }
+                else
+                {
+                    idek=fr.locals[position].value;
+                }
+            }
+            if(first=="set")
+            {
+                idek=temp;
+            }
+            else if (first=="add")
+            {
+                idek=idek+temp;
+            }
+            else if(first=="sub")
+            {
+                idek=idek-temp;
+            }
+            else if(first=="mul")
+            {
+                idek=idek*temp;
+            }
+            else if(first=="div"&&temp!=0)
+            {
+                idek=idek/temp;
+            }
 
+            if(position!=-1)
+            {
+                if(flag==true)
+                {
+                    fr.argv[position].value=idek;
+                }
+                else
+                {
+                    fr.locals[position].value=idek;
+                }
+            }
+            else if(first=="set")
+            {
+                fr.locals[fr.localCount].name=tokens[1].text;
+                fr.locals[fr.localCount].value=idek;
+                fr.localCount++;
+            }
+        }
+        else if(first=="call")
+        {
+            int64_t next=ftell(f);
+            fseek(f,val,SEEK_SET);
+            string st;
+            readResolveRecord(f,st);
+            Token tok[MAX_TOKENS];
+            int k=tokenizeLine(st,tok,MAX_TOKENS);
+            Frame m;
+            m.func_name=tokens[1].text;
+            m.argc=k-2;
+            m.returnLine=(int32_t)next;
+            m.localCount=0;
+            int dep=callStack.depth();
+            for(int i=0;i<m.argc;i++)
+            {
+                m.argv[i].name=tok[2+i].text;
+                m.argv[i].value=0;
+                names[dep][i]="";
+                if(2+i<t)
+                {
+                    string var=tokens[2+i].text;
+                    names[dep][i]=var;
+                    m.argv[i].value=get_val(var,fr);
+                }
+            }
+            callStack.push(m);
+        }
+        else if(first=="func_end")
+        {
+            if(callStack.depth()==1)
+            {
+                break;
+            }
+            Frame finish=callStack.pop();
+            Frame&call=callStack.peek();
+            int depth=callStack.depth();
+            for(int i=0;i<finish.argc;i++)
+            {
+                string rr=names[depth][i];
+                for(int j=0;j<call.localCount;j++)
+                {
+                    if(call.locals[j].name==rr)
+                    {
+                        call.locals[j].value=finish.argv[i].value;
+                    }
+                }
+                for(int w=0;w<call.argc;w++)
+                {
+                    if(call.argv[w].name==rr)
+                    {
+                        call.argv[w].value=finish.argv[i].value;
+                    }
+                }
+            }
+            fseek(f,finish.returnLine,SEEK_SET);
+        }
+        timeline.record(buildSnapshot(callStack));
+    }
+    fclose(f);
     // implementation:
     // execute line by line, and according to the keyword perform action
 }
@@ -473,6 +663,7 @@ void writeTdbg(Timeline& timeline, const char* tdbgPath)
     // update the header
 }
 // main section
+
 int32_t main()
 {
     if (!validateProgram("source.bin"))

@@ -14,3 +14,8 @@ kia kia karna hai and then im gonna try to implement it after.
 -gonna do resolveprogram now
 -why did resolve program take so long ?? im done with it now
 -gonna start stage 3 soon
+-kabse stage 3 pe phassi hui hun why is it so hard aaaaa
+12/10/2026:
+-bhai ye itna lamba kyu hai neeno aa rahi litr i think im about halfway thru this stage finally
+-hogya shukar hai
+-gonna start stage 4 now
