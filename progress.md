@@ -19,3 +19,4 @@ kia kia karna hai and then im gonna try to implement it after.
 -bhai ye itna lamba kyu hai neeno aa rahi litr i think im about halfway thru this stage finally
 -hogya shukar hai
 -gonna start stage 4 now
+-hogya. took me long enough
