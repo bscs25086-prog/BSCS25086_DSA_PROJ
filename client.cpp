@@ -22,56 +22,24 @@
 #include <signal.h>
 #include <vector>
 #include <sys/socket.h>
+#include <sstream>
 #include "helper.h"
 using namespace std;
 
 // ---- Constants ----
 const char *PROGRAM_NAME = "ttdb";
 const char *PROMPT = "ttdb> ";
-const int IO_BUFFER_SIZE = 64 * 1024;     // fixed buffer for streaming files to and from the socket
+//const int IO_BUFFER_SIZE = 64 * 1024;     // fixed buffer for streaming files to and from the socket
 const char *TDBG_FILE = "ttdb_last.tdbg"; // where the downloaded .tdbg is saved
 const int MAX_JUMP = 1000000000;          // biggest n accepted by jmp
 string LB_HOST = "127.0.0.0";
 int LB_PORT = 5000;
 
-// These two must be the same as in Phase 1
-
-const int MAX_VARS_PER_FRAME = 16;
-const int MAX_STACK_DEPTH = 64;
-
-
-// ---- Structs (same as Phase 1, so the file can be read back exactly as it was written) ----
-struct Variable
-{
-    string name;
-    int32_t value;
-};
-struct Frame
-{
-    string func_name;
-    int32_t argc;
-    Variable argv[MAX_VARS_PER_FRAME];
-    int32_t returnLine;
-    Variable locals[MAX_VARS_PER_FRAME];
-    int32_t localCount;
-};
-struct Snapshot
-{
-    Frame callStack[MAX_STACK_DEPTH];
-    int32_t stackDepth;
-};
-struct TTDBHeader 
-{
-    char magic[4]; // "TTDB"
-    int32_t version;
-    int32_t stepCount;
-    int64_t indexOffset;
-};
-
 // ---- Structs only the client needs ----
 struct TdbgReader
 {
-    ssize_t file_index;
+    //ssize_t file_index;
+    FILE* file;
     TTDBHeader header;
     vector<int64_t> index;
 };
@@ -90,11 +58,33 @@ bool recvAll(int sock, char *buf, size_t n)
 {
     // recv() can return fewer bytes than asked for, so keep calling it until exactly n bytes are read.
     // Return false if the connection closes or fails before n bytes arrive.
+    while(n>0)
+    {
+        ssize_t used=recv(sock,buf,n,0);
+        if(used<=0)
+        {
+            return false;
+        }
+        buf=buf+used;
+        n=n-used;
+    }
+    return true;
 }
 bool sendAll(int sock, const char *buf, size_t n)
 {
     // send() can send fewer bytes than asked for, so keep calling it until all n bytes are sent.
     // Use the flag MSG_NOSIGNAL. Return false if the connection fails.
+    while(n>0)
+    {
+        ssize_t used=send(sock,buf,n,MSG_NOSIGNAL);
+        if(used<=0)
+        {
+            return false;
+        }
+        buf=buf+used;
+        n=n-used;
+    }
+    return true;
 }
 
 int connectToHost(const char *host, int port)
@@ -126,10 +116,26 @@ bool receiveResponse(int sock, const char *outTdbgPath, string &outError)
 
 bool openTdbg(const char *path, TdbgReader &r)
 {
+    r.file=fopen(path,"rb");
+    if(r.file==NULL)
+    {
+        return false;
+    }
+    fread(r.header.magic,1,4,r.file);
+    fread(&r.header.version,4,1,r.file);
+    fread(&r.header.stepCount,4,1,r.file);
+    fread(&r.header.indexOffset,8,1,r.file);
+
 }
 void closeTdbg(TdbgReader &r)
 {
     // Free r.index and close the file.
+    r.index.clear();
+    if(r.file!=NULL)
+    {
+        fclose(r.file);
+        r.file=NULL;
+    }
 }
 Snapshot *readSnapshotAt(TdbgReader &r, int32_t step)
 {
@@ -142,12 +148,18 @@ Snapshot *readSnapshotAt(TdbgReader &r, int32_t step)
 
 void initSession(DebugSession &s)
 {
-   
+   s.active_flag=0;
+   s.currentStep=0;
 }
 void closeSession(DebugSession &s)
 {
     // If active, call closeTdbg(s.reader). Then set active = false.
     // Called when the user types quit and when the input ends.
+    if(s.active_flag==1)
+    {
+        closeTdbg(s.reader);
+    }
+    s.active_flag=0;
 }
 
 // =============================================================================================
@@ -189,6 +201,14 @@ void printSnapshot(int32_t step, int32_t totalSteps, const Snapshot &s)
 void printHelp()
 {
     // Print the commands
+    cout<<"--- COMMANDS ---"<<endl;
+    cout<<"start (path)   - sends the file to the server"<<endl
+        <<"next           - move to the next step"<<endl
+        <<"prv            - move to the previous step"<<endl
+        <<"jmp next (num) - move n steps forward"<<endl
+        <<"jmp prv (num)  - move n steps backwards"<<endl
+        <<"help           - help"<<endl
+        <<"quit / exit    - quit"<<endl;
 }
 
 // =============================================================================================
@@ -208,6 +228,55 @@ bool runCommand(DebugSession &s, const string &line, bool &quitRequested)
     //      help       -> printHelp
     //      quit, exit -> set quitRequested = true
     // 4. For anything else, or a wrong number of words, print "unknown command" and the help text, and return false.
+    vector<string>words;
+    string temp;
+    stringstream ss(line);
+    while(ss>>temp)
+    {
+        words.push_back(temp);
+    }
+    if(words.size()>0 && words[0]=="ttdb")
+    {
+        words.erase(words.begin());
+    }
+    if(words.size()>0)
+    {
+        return false;
+    }
+    string first=words[0];
+    if(first=="start" && words.size()==2)
+    {
+        return cmdStart(s,words[1]); //words[1] humara path/file hoga
+    }
+    else if(first=="next" && words.size()==1)
+    {
+        return cmdNext(s);
+    }
+    else if(first=="prv" && words.size()==1)
+    {
+        return cmdPrv(s);
+    }
+    else if(first=="help" && words.size()==1)
+    {
+        printHelp();
+        return true;
+    }
+    else if((first=="quit"||first=="exit") && words.size()==1)
+    {
+        quitRequested=true;
+        return true;
+    }
+    /*else if(first=="jmp" && (words[1]=="next" || words[1]=="prv") && words[2]>0)
+    {
+
+    }*/
+    else
+    {
+        cout<<"Unknown Command!"<<endl;
+        cout<<"help: "<<endl;
+        printHelp();
+        return false;
+    }
 }
 int main(int argc, char *argv[])
 {

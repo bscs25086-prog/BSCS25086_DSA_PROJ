@@ -1,5 +1,7 @@
 #pragma once
-
+#include <string>
+#include <cstdint>
+using namespace std;
 
 // Helper.h should contain the structs, functions, constants, etc. that are used more than one time in the project. For example, the structs that are used in both server and client, the constants that are used in all three files. 
 
@@ -12,4 +14,39 @@ struct PendingPatch
 {
     int64_t byteOffsetOfOffsetField; // where in resolve.bin to seek back and overwrite
     string targetFuncName;
+};
+
+//constants 
+
+const int MAX_VARS_PER_FRAME = 16;
+const int MAX_STACK_DEPTH = 64;
+const int32_t IO_BUFFER_SIZE = 64 * 1024;
+
+//structs
+
+struct Variable
+{
+    string name;
+    int32_t value;
+};
+struct Frame
+{
+    string func_name;
+    int32_t argc;
+    Variable argv[MAX_VARS_PER_FRAME];
+    int32_t returnLine;
+    Variable locals[MAX_VARS_PER_FRAME];
+    int32_t localCount;
+};
+struct Snapshot
+{
+    Frame callStack[MAX_STACK_DEPTH];
+    int32_t stackDepth;
+};
+struct TTDBHeader 
+{
+    char magic[4]; // "TTDB"
+    int32_t version;
+    int32_t stepCount;
+    int64_t indexOffset;
 };

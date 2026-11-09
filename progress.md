@@ -1,3 +1,5 @@
+PHASE 1:
+
 4/10/2026:
 -im still currently on stage 0, going through the document in detail trying to figure out
 kia kia karna hai and then im gonna try to implement it after.
@@ -20,3 +22,9 @@ kia kia karna hai and then im gonna try to implement it after.
 -hogya shukar hai
 -gonna start stage 4 now
 -hogya. took me long enough
+
+PHASE 02:
+-implemented queue
+-fixed helper.h
+-implemented a few functions in client.cpp
+-still working on client.cpp
