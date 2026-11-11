@@ -28,3 +28,4 @@ PHASE 02:
 -fixed helper.h
 -implemented a few functions in client.cpp
 -still working on client.cpp
+-implemented some of client.cpp part D

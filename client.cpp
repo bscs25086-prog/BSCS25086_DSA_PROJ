@@ -139,6 +139,7 @@ void closeTdbg(TdbgReader &r)
 }
 Snapshot *readSnapshotAt(TdbgReader &r, int32_t step)
 {
+
 }
 
 // =============================================================================================
@@ -172,9 +173,36 @@ bool showCurrent(DebugSession &s)
 {
     // Read the snapshot at s.currentStep, call printSnapshot, delete the snapshot.
     // If readSnapshotAt returns nullptr, print "damaged .tdbg file" and return false.
+    Snapshot*snap=readSnapshotAt(s.reader, int32_t(s.currentStep));
+    if(snap==nullptr)
+    {
+        cout<<"damaged .tdbg file!"<<endl;
+        return false;
+    }
+    printSnapshot((int32_t)s.currentStep+1,s.reader.header.stepCount,*snap);
+    delete snap;
+    return true;
 }
 bool moveBy(DebugSession &s, int32_t delta)
 {
+    if(s.active_flag==0)
+    {
+        cout<<"No active session yet. Start session by using 'start' "<<endl;
+        return false;
+    }
+    int64_t step=s.currentStep+delta;
+    if(step<0 || step>s.stepCount)
+    {
+        cout<<"out of range!"<<endl;
+        return false;
+    }
+    s.currentStep=step;
+    return showCurrent(s);
+}
+
+bool requestDebugFile(const string& sourcePath,const char*outPath,string&)
+{
+
 }
 bool cmdStart(DebugSession &s, const string &sourcePath)
 {
@@ -186,10 +214,22 @@ bool cmdStart(DebugSession &s, const string &sourcePath)
     //    set s.currentStep = 0 and s.active = true.
     // 5. Show step 1 with showCurrent(s).
 }
-bool cmdNext(DebugSession &s) {}
-bool cmdPrv(DebugSession &s) {}
-bool cmdJmpNext(DebugSession &s, int32_t n) {}
-bool cmdJmpPrv(DebugSession &s, int32_t n) { }
+bool cmdNext(DebugSession &s) 
+{
+    return moveBy(s, 1);
+}
+bool cmdPrv(DebugSession &s) 
+{
+    return moveBy(s,-1);
+}
+bool cmdJmpNext(DebugSession &s, int32_t n)
+{
+    return moveBy(s,n);
+}
+bool cmdJmpPrv(DebugSession &s, int32_t n) 
+{
+    return moveBy(s,-n);
+}
 
 // =============================================================================================
 // PART E: PRINTING
@@ -197,6 +237,26 @@ bool cmdJmpPrv(DebugSession &s, int32_t n) { }
 
 void printSnapshot(int32_t step, int32_t totalSteps, const Snapshot &s)
 {
+    cout<<"------------------------------------"<<endl;
+    cout<<"Step: "<<step<<" of "<<totalSteps<<endl;
+    cout<<"------------------------------------"<<endl;
+    for(int i=0;i<s.stackDepth;i++)
+    {
+        const Frame&fr=s.callStack[i];
+        cout<<"function name: "<<fr.func_name<<endl;
+        cout<<"";
+        for(int j=0;j<fr.argc;j++)
+        {
+            cout<<fr.argv[j].name<<"="<<fr.argv[j].value<<" ";
+        }
+        cout<<endl;
+        cout<<" locals: ";
+        for(int j=0;j<fr.localCount;j++)
+        {
+            cout<<fr.locals[j].name<<"="<<fr.locals[j].value<<" ";
+        }
+        cout<<endl;
+    }
 }
 void printHelp()
 {
