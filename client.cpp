@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <cstring>
 #include <unistd.h>
 #include <signal.h>
@@ -32,7 +34,7 @@ const char *PROMPT = "ttdb> ";
 //const int IO_BUFFER_SIZE = 64 * 1024;     // fixed buffer for streaming files to and from the socket
 const char *TDBG_FILE = "ttdb_last.tdbg"; // where the downloaded .tdbg is saved
 const int MAX_JUMP = 1000000000;          // biggest n accepted by jmp
-string LB_HOST = "127.0.0.0";
+string LB_HOST = "127.0.0.1";
 int LB_PORT = 5000;
 
 // ---- Structs only the client needs ----
@@ -91,12 +93,54 @@ int connectToHost(const char *host, int port)
 {
     // Create a TCP socket and connect it to host:port.
     // Return the socket, or -1 if the connection fails.
+    int sock=socket(AF_INET,SOCK_STREAM,0);
+    sockaddr_in address;
+    address.sin_family=AF_INET;
+    address.sin_port=htons(port);
+    inet_pton(AF_INET,host,&address.sin_addr);
+    if(connect(sock,(sockaddr*)&address,sizeof(address))==-1)
+    {
+        close(sock);
+        return -1;
+    }
+    return sock;
 }
 bool uploadSource(int sock, const char *sourcePath)
 {
     // have to do checksum and then send
     // When the file is finished, call shutdown(sock, SHUT_WR). This is how the server knows the string is complete.
     // Return false if the file cannot be opened or any send fails.
+    FILE *f=fopen(sourcePath,"rb");
+    if(f==NULL)
+    {
+        return false;
+    }
+    uint32_t sum=5;
+    char status=0;
+    sum=checksum(sum,&status,1);
+    if(!sendAll(sock,&status,1))
+    {
+        fclose(f);
+        return false;
+    }
+    char buffer[IO_BUFFER_SIZE];
+    size_t got;
+    while((got=fread(buffer,1,IO_BUFFER_SIZE,f))>0)
+    {
+        sum=checksum(sum,buffer,got);
+        if(!sendAll(sock,buffer,got))
+        {
+            fclose(f);
+            return false;
+        }
+    }
+    fclose(f);
+    if(!sendAll(sock,(char*)&sum,4))
+    {
+        return false;
+    }
+    shutdown(sock,SHUT_WR);
+    return true;
 }
 bool receiveResponse(int sock, const char *outTdbgPath, string &outError)
 {
@@ -105,6 +149,74 @@ bool receiveResponse(int sock, const char *outTdbgPath, string &outError)
     // Status 1: collect the payload into outError. Status 0: write the payload to the file.
     // At the end call verify(). If it fails, delete the file, set outError to
     // "checksum mismatch, response corrupted" and return false.
+    char status;
+    if(!recvAll(sock,&status,1))
+    {
+        outError="response too short";
+        return false;
+    }
+    uint32_t sum=5;
+    sum=checksum(sum,&status,1);
+    FILE *f=NULL;
+    if(status==0)
+    {
+        f=fopen(outTdbgPath,"wb");
+        if(f==NULL)
+        {
+            outError="could not save file";
+            return false;
+        }
+    }
+    else
+    {
+        outError.clear();
+    }
+
+    vector<char> tail;
+    char buffer[IO_BUFFER_SIZE];
+    ssize_t got;
+    while((got=recv(sock,buffer,IO_BUFFER_SIZE,0))>0)
+    {
+        tail.insert(tail.end(),buffer,buffer+got);
+        if(tail.size()>4)
+        {
+            size_t ready=tail.size()-4;
+            sum=checksum(sum,&tail[0],ready);
+            if(status==0)
+            {
+                fwrite(&tail[0],1,ready,f);
+            }
+            else
+            {
+                outError.append(&tail[0],ready);
+            }
+            tail.erase(tail.begin(),tail.begin()+ready);
+        }
+    }
+
+    if(f!=NULL)
+    {
+        fclose(f);
+    }
+    if(tail.size()<4)
+    {
+        if(status==0) remove(outTdbgPath);
+        outError="response too short";
+        return false;
+    }
+
+    uint32_t received;
+    memcpy(&received,&tail[0],4);
+    if(sum!=received)
+    {
+        if(status==0)
+        {
+            remove(outTdbgPath);
+        } 
+        outError="checksum mismatch, response corrupted";
+        return false;
+    }
+    return status==0;
 }
 
 // =============================================================================================
@@ -125,7 +237,25 @@ bool openTdbg(const char *path, TdbgReader &r)
     fread(&r.header.version,4,1,r.file);
     fread(&r.header.stepCount,4,1,r.file);
     fread(&r.header.indexOffset,8,1,r.file);
-
+    if(memcmp(r.header.magic,"TTDB",4)!=0 || r.header.stepCount<0)
+    {
+        fclose(r.file);
+        r.file=NULL;
+        return false;
+    }
+    fseek(r.file,r.header.indexOffset,SEEK_SET);
+    r.index.resize(r.header.stepCount);
+    if(r.header.stepCount>0)
+    {
+        size_t temp=fread(&r.index[0],8,r.header.stepCount,r.file);
+        if(temp!=(size_t)r.header.stepCount)
+        {
+            fclose(r.file);
+            r.file=NULL;
+            return false;
+        }
+    }
+    return true;
 }
 void closeTdbg(TdbgReader &r)
 {
@@ -139,7 +269,56 @@ void closeTdbg(TdbgReader &r)
 }
 Snapshot *readSnapshotAt(TdbgReader &r, int32_t step)
 {
+    if(step<0 || step>=r.header.stepCount)
+    {
+        return nullptr;
+    }
+    fseek(r.file,r.index[step],SEEK_SET);
 
+    Snapshot *snap=new Snapshot;
+    int32_t size;
+    fread(&snap->stackDepth,4,1,r.file);
+    if(snap->stackDepth<0 || snap->stackDepth>MAX_STACK_DEPTH)
+    {
+        delete snap;
+        return nullptr;
+    }
+    for(int i=0;i<snap->stackDepth;i++)
+    {
+        Frame &fr=snap->callStack[i];
+        fread(&size,4,1,r.file);
+        fr.func_name.resize(size);
+        fread(&fr.func_name[0],1,size,r.file);
+        fread(&fr.argc,4,1,r.file);
+        if(fr.argc<0 || fr.argc>MAX_VARS_PER_FRAME)
+        {
+            delete snap;
+            return nullptr;
+        }
+        for(int j=0;j<fr.argc;j++)
+        {
+            fread(&size,4,1,r.file);
+            fr.argv[j].name.resize(size);
+            fread(&fr.argv[j].name[0],1,size,r.file);
+            fread(&fr.argv[j].value,4,1,r.file);
+        }
+
+        fread(&fr.returnLine,4,1,r.file);
+        fread(&fr.localCount,4,1,r.file);
+        if(fr.localCount<0 || fr.localCount>MAX_VARS_PER_FRAME)
+        {
+            delete snap;
+            return nullptr;
+        }
+        for(int j=0;j<fr.localCount;j++)
+        {
+            fread(&size,4,1,r.file);
+            fr.locals[j].name.resize(size);
+            fread(&fr.locals[j].name[0],1,size,r.file);
+            fread(&fr.locals[j].value,4,1,r.file);
+        }
+    }
+    return snap;
 }
 
 // =============================================================================================
@@ -191,7 +370,7 @@ bool moveBy(DebugSession &s, int32_t delta)
         return false;
     }
     int64_t step=s.currentStep+delta;
-    if(step<0 || step>s.stepCount)
+    if(step<0 || step>=s.reader.header.stepCount)
     {
         cout<<"out of range!"<<endl;
         return false;
@@ -200,9 +379,23 @@ bool moveBy(DebugSession &s, int32_t delta)
     return showCurrent(s);
 }
 
-bool requestDebugFile(const string& sourcePath,const char*outPath,string&)
+bool requestDebugFile(const string& sourcePath,const char*outPath,string& error)
 {
-
+    int sock=connectToHost(LB_HOST.c_str(),LB_PORT);
+    if(sock==-1)
+    {
+        error="connection to load balancer failed!!";
+        return false;
+    }
+    if(!uploadSource(sock,sourcePath.c_str()))
+    {
+        error="ERROR! could not upload the source file";
+        close(sock);
+        return false;
+    }
+    bool response=receiveResponse(sock,outPath,error);
+    close(sock);
+    return response;
 }
 bool cmdStart(DebugSession &s, const string &sourcePath)
 {
@@ -213,6 +406,26 @@ bool cmdStart(DebugSession &s, const string &sourcePath)
     // 4. Only now close the old reader (if s.active), then put the new reader into s,
     //    set s.currentStep = 0 and s.active = true.
     // 5. Show step 1 with showCurrent(s).
+    string error;
+    if(requestDebugFile(sourcePath,TDBG_FILE,error)==false)
+    {
+        cout<<error<<" "<<endl;
+        return false;
+    }
+    TdbgReader new_reader;
+    if(openTdbg(TDBG_FILE,new_reader)==false)
+    {
+        cout<<"server sent a damaged .tdbg file!"<<endl;
+        return false;
+    }
+    if(s.active_flag==1)
+    {
+        closeTdbg(s.reader);
+    }
+    s.reader=new_reader;
+    s.currentStep=0;
+    s.active_flag=true;
+    return showCurrent(s);
 }
 bool cmdNext(DebugSession &s) 
 {
@@ -299,7 +512,7 @@ bool runCommand(DebugSession &s, const string &line, bool &quitRequested)
     {
         words.erase(words.begin());
     }
-    if(words.size()>0)
+    if(words.size()==0)
     {
         return false;
     }
@@ -326,10 +539,15 @@ bool runCommand(DebugSession &s, const string &line, bool &quitRequested)
         quitRequested=true;
         return true;
     }
-    /*else if(first=="jmp" && (words[1]=="next" || words[1]=="prv") && words[2]>0)
+    else if(first=="jmp" && words.size()==3 && (words[1]=="next" || words[1]=="prv") && atoi(words[2].c_str())>0)
     {
-
-    }*/
+        int n=atoi(words[2].c_str());
+        if(words[1]=="next")
+        {
+            return cmdJmpNext(s,n);
+        }
+        return cmdJmpPrv(s,n);
+    }
     else
     {
         cout<<"Unknown Command!"<<endl;
@@ -341,14 +559,35 @@ bool runCommand(DebugSession &s, const string &line, bool &quitRequested)
 int main(int argc, char *argv[])
 {
     // you get string LB_HOST and int LB_PORT = 0 in arguments of this main function. 
-
-    // DebugSession session; initSession(session);
+    if(argc>=3)
+    {
+        LB_HOST=argv[1];
+        LB_PORT=stoi(argv[2]);
+    }
+    DebugSession session; 
+    initSession(session);
     // Print a short welcome and the help text.
-    //
+    cout<<"WELCOME!"<<endl;
+    printHelp();
     // Infinite loop:
     //   if quitRequested, break
-    //
+    string input;
+    bool quitRequested=false;
+    while(true)
+    {
+        if(quitRequested)
+        {
+            break;
+        }
+        cout<<PROMPT<<endl;
+        if(!getline(cin,input))
+        {
+            break;
+        }
+        runCommand(session,input,quitRequested);
+    }
     // After the loop: closeSession(session) and return 0.
+    closeSession(session);
+    return 0;
     // Never exit the loop because of an error. Only quit or the end of the input leaves it.
-
 }

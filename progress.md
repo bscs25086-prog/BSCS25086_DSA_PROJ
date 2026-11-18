@@ -29,3 +29,6 @@ PHASE 02:
 -implemented a few functions in client.cpp
 -still working on client.cpp
 -implemented some of client.cpp part D
+-continued doing client
+-almost done with it js a few functions left
+-started loadbalancer and worked on it

@@ -46,7 +46,7 @@ const int MAX_PENDING_CLIENTS = 8;         // clients allowed to wait in our que
 const int STARTUP_MAX_ATTEMPTS = 50;       // after starting the server, how many times we try to connect
 const int STARTUP_POLL_INTERVAL_MS = 100;  // wait between those tries (50 x 100 ms = 5 seconds in total)
 int lbPort = 5000;
-string serverHost = "127.0.0.0";
+string serverHost = "127.0.0.1";
 int serverPort = 5001;
 
 
@@ -85,37 +85,32 @@ public:
     }
     void enqueue(const T &val)
     {
-        Node* n = new Node(val);
+        Node* n = new Node;
+        n->data=val;
+        n->next=nullptr;
         if(front==nullptr)
         {
             front=rear=n;
-            count++;
-            return;
         }
-        rear->next=n;
-        rear=n;
+        else
+        {
+            rear->next=n;
+            rear=n;
+        }
         count++;
     }
     T dequeue()
     {
+        Node*temp=front;
+        T val=temp->data;
+        front=front->next;
         if(front==nullptr)
         {
-            return;
+            rear=nullptr;;
         }
-
-        if(front==rear)
-        {
-            delete front;
-            front=nullptr;
-            rear=nullptr;
-        }
-        else
-        {
-            Node* temp=front;
-            front=front->next;
-            delete temp;
-        }
+        delete temp;
         count--;
+        return val;
     }
     bool isEmpty()
     {
@@ -166,6 +161,12 @@ bool sendError(int sock, const string &message)
 {
     // Reply format: [status: 1 byte][payload until close][checksum: 4 bytes].
     // For an error: send one byte with value 1, then the message text. 
+    char status=1;
+    if(sendAll(sock,&status,1) && sendAll(sock,message.c_str(),message.size()))
+    {
+        return true;
+    }
+    return false;
 }
 int createListenSocket(int port)
 { 
@@ -173,11 +174,40 @@ int createListenSocket(int port)
     // set SO_REUSEADDR so we can restart the load balancer right away.
     // bind() to the port on any address, then listen(LISTEN_BACKLOG).
     // If bind or listen fails, print the error and exit, because without this socket we cannot work.
+    int tcp_socket=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);
+    int on=1;
+    setsockopt(tcp_socket,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
+    sockaddr_in address;
+    address.sin_family=AF_INET;
+    address.sin_port=htons(port);
+    address.sin_addr.s_addr=INADDR_ANY;
+    if(bind(tcp_socket,(sockaddr*)&address,sizeof(address))==-1)
+    {
+        cout<<"bind failed!"<<endl;
+        exit(1);
+    }
+    if(listen(tcp_socket,LISTEN_BACKLOG)==-1)
+    {
+        cout<<"listen failed!"<<endl;
+        exit(1);
+    }
+    return tcp_socket;
 }
 int connectToServer(const char *host, int port)
 {
     // Create a TCP socket (SOCK_CLOEXEC) and connect it to host:port.
     // Return the socket, or -1 if the connection fails 
+    int tcp_socket=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);
+    sockaddr_in address;
+    address.sin_family=AF_INET;
+    address.sin_port=htons(port);
+    inet_pton(AF_INET,host,&address.sin_addr);
+    if(connect(tcp_socket,(sockaddr*)&address,sizeof(address))==-1)
+    {
+        close(tcp_socket);
+        return -1;
+    }
+    return tcp_socket;
 }
 
 // =============================================================================================
@@ -191,6 +221,14 @@ bool startServer(int port)
     //   Example: "./server 5001 &"
     // Call system() with it.
     // Return true if system() returned 0, otherwise false.
+    string command="";
+    command=string(SERVER_PATH)+" "+to_string(port)+"&";
+    int temp=system(command.c_str());
+    if(temp==0)
+    {
+        return true;
+    }
+    return false;
 }
 int connectToServerWithWakeup()
 {
@@ -198,6 +236,27 @@ int connectToServerWithWakeup()
     // 2. Otherwise call startServer(). If it fails, return -1.
     // 3. Try connectToServer() up to STARTUP_MAX_ATTEMPTS times 
     // 4. Return the first working socket, or -1 if the server never came up.
+    int sock=connectToServer(serverHost.c_str(),serverPort);
+    if(sock!=-1)
+    {
+        return sock;
+    }
+    if(!startServer(serverPort))
+    {
+        return -1;
+    }
+    int i=0;
+    while(i<STARTUP_MAX_ATTEMPTS)
+    {
+        usleep(STARTUP_POLL_INTERVAL_MS*1000);
+        sock=connectToServer(serverHost.c_str(),serverPort);
+        if(sock!=-1)
+        {
+            return sock;
+        }
+        i++;
+    }
+    return -1;
 }
 
 
@@ -216,6 +275,32 @@ void relayOneClient(ClientInfo &c)
     // 5. Server -> client: repeat recv() from serverSock and sendAll() to clientSock.
     //    Stop when recv() returns 0 (the server sent its whole reply and closed) or fails.
     // 6. Close both sockets.
+    int serverSock=connectToServerWithWakeup();
+    if(serverSock==-1)
+    {
+        sendError(c.sock,"backend server failed to start");
+        close(c.sock);
+        return;
+    }
+    char buffer[IO_BUFFER_SIZE];
+    ssize_t temp;
+    while((temp=recv(c.sock,buffer,IO_BUFFER_SIZE,0))>0)
+    {
+        if(!sendAll(serverSock,buffer,temp))
+        { 
+            break;
+        }
+    }
+    shutdown(serverSock,SHUT_WR);
+    while((temp=recv(serverSock,buffer,IO_BUFFER_SIZE,0))>0)
+    {
+        if(!sendAll(c.sock,buffer,temp))
+        { 
+            break;
+        }
+    }
+    close(serverSock);
+    close(c.sock);
 }
 
 
@@ -234,6 +319,37 @@ void acceptLoop(int listenSock)
     //   Otherwise enqueue the client socket.
     // Never wait for the server here, so new clients are always accepted quickly.
     // If accept() fails, print the error and keep going (do not end the thread).
+    while(flag)
+    {
+        sockaddr_in clientAddr;
+        socklen_t length=sizeof(clientAddr);
+        int clientSock=accept(listenSock,(sockaddr*)&clientAddr,&length);
+        if(clientSock==-1)
+        {
+            cout<<"accept failed!"<<endl;
+            continue;
+        }
+        ClientInfo c;
+        c.sock=clientSock;
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET,&clientAddr.sin_addr,ip,sizeof(ip));
+        c.address=ip;
+        c.port=ntohs(clientAddr.sin_port);
+        c.arrivedAt=time(NULL);
+        queueMutex.lock();
+
+        if(pendingClients.size()>=MAX_PENDING_CLIENTS)
+        {
+            queueMutex.unlock();
+            sendError(clientSock,"the server is busy, try again later");
+            close(clientSock);
+        }
+        else
+        {
+            pendingClients.enqueue(c);
+            queueMutex.unlock();
+        }
+    }
 }
 void dispatcherLoop()
 {
@@ -241,6 +357,33 @@ void dispatcherLoop()
     // Repeat:
     //   Lock queueMutex, take ONE client out of the queue if there is one, unlock.
     //   If we got a client: call relayOneClient(). The next client is taken out of the queue only after this one is finished.
+    while(flag)
+    {
+        bool temp=false;
+        ClientInfo client;
+        queueMutex.lock();
+        if(!pendingClients.isEmpty())
+        {
+            client=pendingClients.dequeue();
+            temp=true;
+        }
+        queueMutex.unlock();
+        if(temp)
+        {
+            if(time(NULL)-client.arrivedAt>30)
+            {
+                close(client.sock);
+            }
+            else
+            {
+                relayOneClient(client);
+            }
+        }
+        else
+        {
+            usleep(10000);
+        }
+    }
 }
 
 void handler(int sg) {
@@ -254,5 +397,15 @@ int main(int argc, char *argv[])
     // 2. listenSock = createListenSocket(LB_PORT).
     // 3. Start a thread that runs acceptLoop(listenSock) and detach it.
     // 4. Call dispatcherLoop().
+    if(argc>=3)
+    {
+        serverHost=argv[1];
+        serverPort=stoi(argv[2]);
+    }
+    int listenSock=createListenSocket(lbPort);
+    thread t(acceptLoop,listenSock);
+    t.detach();
+    dispatcherLoop();
+    close(listenSock);
     return 0;
 }

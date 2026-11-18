@@ -50,3 +50,15 @@ struct TTDBHeader
     int32_t stepCount;
     int64_t indexOffset;
 };
+
+inline uint32_t checksum(uint32_t sum,const char *data,size_t n)
+{
+    for(size_t i=0;i<n;i++)
+    {
+        unsigned char byte=data[i];  /*we use unsigned cahr kyun ke we cant let the 
+                                      big bytes become negative*/
+        sum=sum*20;
+        sum=sum+byte;        
+    }
+    return sum;
+}
