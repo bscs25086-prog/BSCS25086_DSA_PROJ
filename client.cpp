@@ -204,7 +204,6 @@ bool receiveResponse(int sock, const char *outTdbgPath, string &outError)
         outError="response too short";
         return false;
     }
-
     uint32_t received;
     memcpy(&received,&tail[0],4);
     if(sum!=received)
