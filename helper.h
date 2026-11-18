@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <cstdint>
+#include<sys/socket.h>
 using namespace std;
 
 // Helper.h should contain the structs, functions, constants, etc. that are used more than one time in the project. For example, the structs that are used in both server and client, the constants that are used in all three files. 
@@ -61,4 +62,19 @@ inline uint32_t checksum(uint32_t sum,const char *data,size_t n)
         sum=sum+byte;        
     }
     return sum;
+}
+
+inline bool sendAll(int sock, const char *buf, size_t n)
+{
+    while(n>0)
+    {
+        ssize_t used=send(sock,buf,n,MSG_NOSIGNAL);
+        if(used<=0)
+        {
+            return false;
+        }
+        buf=buf+used;
+        n=n-used;
+    }
+    return true;
 }

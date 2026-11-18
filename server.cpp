@@ -14,6 +14,13 @@
 #include<sstream>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include"helper.h"
 using namespace std;
 
@@ -681,19 +688,93 @@ void writeTdbg(Timeline& timeline, const char* tdbgPath)
 }
 // main section
 
-int32_t main()
+bool sendReply(int sock, char status, const char *body, size_t n)
 {
+    uint32_t sum=5;
+    sum=checksum(sum,&status,1);
+    sum=checksum(sum,body,n);
+    if(!sendAll(sock,&status,1))
+    {
+        return false;
+    }
+    if(n>0 && !sendAll(sock,body,n))
+    {
+        return false;
+    }
+    return sendAll(sock,(char*)&sum,4);
+}
+
+int main(int argc,char*argv[])
+{
+    int port=5001;
+    if(argc>=2)
+    {
+        port=stoi(argv[1]);
+    }
+    int listenSock=socket(AF_INET,SOCK_STREAM,0);
+    int on=1;
+    setsockopt(listenSock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on));
+    sockaddr_in address;
+    address.sin_family=AF_INET;
+    address.sin_port=htons(port);
+    address.sin_addr.s_addr=INADDR_ANY;
+    if(bind(listenSock,(sockaddr*)&address,sizeof(address))==-1)
+    {
+        cout<<"bind failed!"<<endl;
+        return 1;
+    }
+    listen(listenSock,5);
+    int clientSock=accept(listenSock,NULL,NULL);
+
+    vector<char> data;
+    char buffer[IO_BUFFER_SIZE];
+    ssize_t used;
+    while((used=recv(clientSock,buffer,IO_BUFFER_SIZE,0))>0)
+    {
+        data.insert(data.end(),buffer,buffer+used);
+    }
+    if(data.size()<5)
+    {
+        string msg="upload too short";
+        sendReply(clientSock,1,msg.c_str(),msg.size());
+        close(clientSock);
+        close(listenSock);
+        return 1;
+    }
+
+    size_t last=data.size()-4;
+    uint32_t sum;
+    memcpy(&sum,&data[last],4);
+    if(checksum(5,&data[0],last)!=sum)
+    {
+        string msg="checksum mismatch, upload corrupted";
+        sendReply(clientSock,1,msg.c_str(),msg.size());
+        close(clientSock);
+        close(listenSock);
+        return 1;
+    }
+
+    FILE *src=fopen("source.bin","wb");
+    fwrite(&data[1],1,last-1,src);
+    fclose(src);
+
     if (!validateProgram("source.bin"))
     {
         // send an error response instead of a .tdbg file
-        cout<<"ERROR!!! the prgoram is invalid! "<<endl;
+        string msg="the program is invalid!";
+        sendReply(clientSock,1,msg.c_str(),msg.size());
+        close(clientSock);
+        close(listenSock);
         return 1;
     }
 
     int64_t mainOffset = resolveProgram("source.bin", "resolve.bin");
     if(mainOffset==-1)
     {
-        cout<<"ERROR! there is no main function"<<endl;
+        string msg="no main function, or a call to an undefined function";
+        sendReply(clientSock,1,msg.c_str(),msg.size());
+        close(clientSock);
+        close(listenSock);
         return 1;
     }
 
@@ -702,5 +783,17 @@ int32_t main()
 
     writeTdbg(timeline, "session.tdbg");
 
+    FILE *f=fopen("session.tdbg","rb");
+    vector<char> file;
+    size_t n;
+    while((n=fread(buffer,1,IO_BUFFER_SIZE,f))>0)
+    {
+        file.insert(file.end(),buffer,buffer+n);
+    }
+    fclose(f);
+    sendReply(clientSock,0,file.data(),file.size());
+
+    close(clientSock);
+    close(listenSock);
     return 0;
 }

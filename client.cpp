@@ -72,7 +72,7 @@ bool recvAll(int sock, char *buf, size_t n)
     }
     return true;
 }
-bool sendAll(int sock, const char *buf, size_t n)
+/*bool sendAll(int sock, const char *buf, size_t n)
 {
     // send() can send fewer bytes than asked for, so keep calling it until all n bytes are sent.
     // Use the flag MSG_NOSIGNAL. Return false if the connection fails.
@@ -87,7 +87,7 @@ bool sendAll(int sock, const char *buf, size_t n)
         n=n-used;
     }
     return true;
-}
+}*/
 
 int connectToHost(const char *host, int port)
 {
